@@ -1,0 +1,340 @@
+---
+title: "AAPI Texans Below Poverty, 2021"
+author: "Kaitlan Wong"
+format: html
+editor: visual
+---
+
+```{r}
+#| message: false
+
+library(tidycensus)
+library(tidyverse)
+library(readxl)
+library(writexl)
+library(dplyr)
+library(tidyr)
+```
+
+Get 2021 ACS PUMS data.
+
+```{r}
+#| message: false
+
+# Get ACS data
+aapi_pums <- get_pums(
+  variables = c("RACASN","RACNH","RACPI","RAC2P", "POVPIP", "PUMA"), # <---added in puma to the variables you want to DL 
+  state = "TX",
+  survey = "acs5",
+  year = 2021,
+  recode = TRUE,
+  rep_weights = "person"   #<---Need to add this to get the appropriate weights 
+)
+
+# View data
+head(aapi_pums)
+```
+
+Filter and recode variables.
+
+```{r}
+#Filter for AANHPI Texans
+aapi_pov <- aapi_pums %>% 
+  filter(RACASN == 1 | RACNH == 1 | RACPI == 1) %>%
+    mutate(detailed_race = case_when(
+    RAC2P == 38 ~ "Asian Indian alone",
+    RAC2P == 39 ~ "Bangladeshi alone", 
+    RAC2P == 40 ~ "Bhutanese alone",
+    RAC2P == 41 ~ "Burmese alone",
+    RAC2P == 42 ~ "Cambodian alone",
+    RAC2P == 43 ~ "Chinese, except Taiwanese, alone",
+    RAC2P == 44 ~ "Taiwanese alone",
+    RAC2P == 45 ~ "Filipino alone",
+    RAC2P == 46 ~ "Hmong alone",
+    RAC2P == 47 ~ "Indonesian alone",
+    RAC2P == 48 ~ "Japanese alone",
+    RAC2P == 49 ~ "Korean alone",
+    RAC2P == 50 ~ "Laotian alone",
+    RAC2P == 51 ~ "Malaysian alone",
+    RAC2P == 52 ~ "Mongolian alone",
+    RAC2P == 53 ~ "Nepalese alone",
+    RAC2P == 54 ~ "Pakistani alone",
+    RAC2P == 55 ~ "Sri Lankan alone",
+    RAC2P == 56 ~ "Thai alone",
+    RAC2P == 57 ~ "Vietnamese alone",
+    RAC2P == 58 ~ "Other Asian alone",
+    RAC2P == 59 ~ "All combinations of Asian races only",
+    RAC2P == 60 ~ "Native Hawaiian alone",
+    RAC2P == 61 ~ "Samoan alone",
+    RAC2P == 62 ~ "Tongan alone",
+    RAC2P == 63 ~ "Chamorro alone",
+    RAC2P == 64 ~ "Marshallese alone",
+    RAC2P == 65 ~ "Fijian alone",
+    RAC2P == 66 ~ "Other Native Hawaiian and Other Pacific Islander",
+    TRUE ~ NA_character_
+  ),
+    below_poverty = case_when(
+        POVPIP <= 99 ~ TRUE,
+        TRUE ~ NA
+  ),
+      at_or_above_poverty = case_when(
+        POVPIP >= 100 ~ TRUE,
+        TRUE ~ NA
+  ))
+
+# View data
+head(aapi_pov)
+names(aapi_pov)
+```
+
+## Coda's Code
+
+```{r}
+
+#For getting counts
+aapi_pov %>% 
+  count(PUMA, below_poverty, wt = PWGTP)
+
+
+#For getting counts by detailed_race
+a_table <- aapi_pov %>% 
+  group_by(detailed_race) %>% 
+  summarize(
+    total_pop = sum(PWGTP),
+    below_pov = sum(PWGTP[below_poverty == TRUE ]),
+    at_above_pov = sum(PWGTP[at_or_above_poverty == TRUE]))
+
+
+#Arggg...Forgot to remove those darn NA's...usually, I like to remove NA's after I have cleaned a dataset or recoded variables, 
+
+b_table <- aapi_pov %>% 
+  group_by(detailed_race) %>% 
+  summarize(
+    total_pop = sum(PWGTP),
+    below_pov = sum(PWGTP[!is.na(below_poverty) & below_poverty]),
+    at_above_pov = sum(PWGTP[!is.na(at_or_above_poverty) & at_or_above_poverty]))
+
+
+
+#you can write this table to an excel file from here if you want!
+print(a_table) #Not the good table. Has NA's so we get nothing from this. 
+print(b_table)
+
+
+install.packages("openxlsx")
+library(openxlsx)
+
+write.xlsx(b_table, 'aapi_table_b.xlsx')
+
+```
+
+Creating a survey object --- Code needs work!
+
+```{r}
+# library(survey)
+# library(srvyr)
+# 
+# #First create a survey object from the data frame(Walker, 10.3.2)
+# aap_survey_design <-aapi_pov %>%
+#   to_survey(design = "rep_weights")
+# 
+# 
+# 
+# # Get counts by `at_or_above_poverty`
+# aap_survey_design %>%
+#   group_by(detailed_race) %>%
+#   summarize(
+#     at_above = survey_count(at_or_above_poverty))
+# 
+# 
+# 
+# 
+# aap_survey_design %>%
+#   survey_count(at_or_above_poverty)   
+# 
+# aap_survey_design %>%
+#   survey_count(below_poverty)
+# 
+# # str(aap_survey_design)
+# 
+
+```
+
+## 
+
+Getting the upper and lower bounds of the confidence interval
+
+```{r}
+#First create a survey object (Walker, 10.3.2)
+aap_survey_design <- to_survey(aapi_pov)
+
+library(survey)
+library(srvyr, warn.conflicts = FALSE)
+aap_survey_design %>% 
+  group_by(detailed_race) %>% 
+  summarize(
+    total_pop = survey_total(vartype = "ci"),
+    below_pov_n = survey_total(below_poverty, vartype = "ci", na.rm = TRUE),
+    below_pov_pct = survey_mean(below_poverty, vartype = "ci", na.rm = TRUE),
+    at_above_n = survey_total(at_or_above_poverty, vartype = "ci", na.rm = TRUE),
+    at_above_pct = survey_mean(at_or_above_poverty, vartype = "ci", na.rm = TRUE)
+    )
+```
+
+You can ignore this code...was going to show another way of doing this with survey package, but ran out of time. The code needs troubleshooting. Give it a go if you want !
+
+```{r}
+
+
+# library(survey)
+# 
+# # Remember to creat a survey design object
+# design <- svydesign(
+#   data = aapi_pov, 
+#   weights = PWGTP,
+#   id = ~SERIALNO,
+#   nest = TRUE,
+#   strata = ST, 
+#   vars = c("below_poverty", "at_or_above_poverty","detailed_race")
+# )
+# 
+# # Get weighted estimates of the proportion of each race group living below poverty
+# prop_below_poverty <- svymean(~ below_poverty, by = ~ detailed_race, design = design)
+# 
+# # same but for at or above pov
+# prop_above_poverty <- svymean(~ at_or_above_poverty, by = ~ detailed_race, design = design)
+# 
+# # Print the results
+# print(prop_below_poverty)
+# print(prop_above_poverty)
+
+```
+
+```{r}
+# Create table with counts and proportions by detailed race
+aapi_pov_table <- aapi_pov %>% 
+  group_by(detailed_race) %>% 
+  summarise(
+    count_below_poverty = sum(!is.na(below_poverty)),
+    count_at_or_above_poverty = sum(!is.na(at_or_above_poverty)),
+    total_population = count_below_poverty + count_at_or_above_poverty,
+    prop_below_poverty = sum(ifelse(is.na(below_poverty), 0, below_poverty), na.rm = TRUE) / total_population,
+     prop_at_or_above_poverty = sum(ifelse(is.na(at_or_above_poverty), 0, at_or_above_poverty), na.rm = TRUE) / total_population,
+    moe_count_below_poverty = sum(!is.na(below_poverty)) * sqrt(prop_below_poverty * (1 - prop_below_poverty) / sum(!is.na(below_poverty))) * 1.645,
+    moe_count_at_or_above_poverty = sum(!is.na(at_or_above_poverty)) * sqrt(prop_at_or_above_poverty * (1 - prop_at_or_above_poverty) / sum(!is.na(at_or_above_poverty))) * 1.645,
+    moe_prop_below_poverty = sqrt((prop_below_poverty * (1 - prop_below_poverty)) / sum(!is.na(below_poverty))) * 1.645,
+    moe_prop_at_or_above_poverty = sqrt((prop_at_or_above_poverty * (1 - prop_at_or_above_poverty)) / sum(!is.na(at_or_above_poverty))) * 1.645
+  )
+
+# View table
+view(aapi_pov_table)
+
+# library(survey)
+# library(srvyr)
+# aapi_pov %>% 
+#   survey_count(PUMA, below_poverty)
+```
+
+```{r}
+write_xlsx(aapi_pov_table, "aapi_poverty_2021_TX.xlsx")
+```
+
+Use same code to create a table showing overall categories (Asian alone and NHPI alone).
+
+```{r}
+#Filter for AANHPI Texans
+aapi_pov_overall <- aapi_pums %>% 
+  filter(RACASN == 1 | RACNH == 1 | RACPI == 1) %>%
+    mutate(detailed_race = case_when(
+    RAC2P %in% c(38:59) ~ "Asian alone",
+    RAC2P %in% c(60:66) ~ "Native Hawaiian or Pacific Islander alone",
+    TRUE ~ NA_character_
+  ),
+    below_poverty = case_when(
+        POVPIP <= 99 ~ TRUE,
+        TRUE ~ NA
+  ),
+      at_or_above_poverty = case_when(
+        POVPIP >= 100 ~ TRUE,
+        TRUE ~ NA
+  ))
+
+# View data
+head(aapi_pov_overall)
+
+# Create table with counts and proportions by detailed race
+aapi_pov_overall_table <- aapi_pov_overall %>% 
+  group_by(detailed_race) %>% 
+  summarise(
+    count_below_poverty = sum(!is.na(below_poverty)),
+    count_at_or_above_poverty = sum(!is.na(at_or_above_poverty)),
+    total_population = count_below_poverty + count_at_or_above_poverty,
+    prop_below_poverty = sum(ifelse(is.na(below_poverty), 0, below_poverty), na.rm = TRUE) / total_population,
+     prop_at_or_above_poverty = sum(ifelse(is.na(at_or_above_poverty), 0, at_or_above_poverty), na.rm = TRUE) / total_population,
+    moe_count_below_poverty = sum(!is.na(below_poverty)) * sqrt(prop_below_poverty * (1 - prop_below_poverty) / sum(!is.na(below_poverty))) * 1.645,
+    moe_count_at_or_above_poverty = sum(!is.na(at_or_above_poverty)) * sqrt(prop_at_or_above_poverty * (1 - prop_at_or_above_poverty) / sum(!is.na(at_or_above_poverty))) * 1.645,
+    moe_prop_below_poverty = sqrt((prop_below_poverty * (1 - prop_below_poverty)) / sum(!is.na(below_poverty))) * 1.645,
+    moe_prop_at_or_above_poverty = sqrt((prop_at_or_above_poverty * (1 - prop_at_or_above_poverty)) / sum(!is.na(at_or_above_poverty))) * 1.645
+  )
+
+# View table
+view(aapi_pov_overall_table)
+
+
+# export to excel
+write_xlsx(aapi_pov_overall_table, "aapi_poverty_overall.xlsx")
+```
+
+One last table just for the overall AANHPI category.
+
+```{r}
+#Filter for AANHPI Texans
+aapi_pov_all <- aapi_pums %>% 
+  filter(RACASN == 1 | RACNH == 1 | RACPI == 1) %>%
+    mutate(detailed_race = case_when(
+    RAC2P %in% c(38:66) ~ "AANHPI alone",
+    TRUE ~ NA_character_
+  ),
+    below_poverty = case_when(
+        POVPIP <= 99 ~ TRUE,
+        TRUE ~ NA
+  ),
+      at_or_above_poverty = case_when(
+        POVPIP >= 100 ~ TRUE,
+        TRUE ~ NA
+  ))
+
+# View data
+head(aapi_pov_all)
+
+# Create table with counts and proportions by detailed race
+aapi_pov_all_table <- aapi_pov_all %>% 
+  group_by(detailed_race) %>% 
+  summarise(
+    count_below_poverty = sum(!is.na(below_poverty)),
+    count_at_or_above_poverty = sum(!is.na(at_or_above_poverty)),
+    total_population = count_below_poverty + count_at_or_above_poverty,
+    prop_below_poverty = sum(ifelse(is.na(below_poverty), 0, below_poverty), na.rm = TRUE) / total_population,
+     prop_at_or_above_poverty = sum(ifelse(is.na(at_or_above_poverty), 0, at_or_above_poverty), na.rm = TRUE) / total_population,
+    moe_count_below_poverty = sum(!is.na(below_poverty)) * sqrt(prop_below_poverty * (1 - prop_below_poverty) / sum(!is.na(below_poverty))) * 1.645,
+    moe_count_at_or_above_poverty = sum(!is.na(at_or_above_poverty)) * sqrt(prop_at_or_above_poverty * (1 - prop_at_or_above_poverty) / sum(!is.na(at_or_above_poverty))) * 1.645,
+    moe_prop_below_poverty = sqrt((prop_below_poverty * (1 - prop_below_poverty)) / sum(!is.na(below_poverty))) * 1.645,
+    moe_prop_at_or_above_poverty = sqrt((prop_at_or_above_poverty * (1 - prop_at_or_above_poverty)) / sum(!is.na(at_or_above_poverty))) * 1.645
+  )
+
+# View table
+view(aapi_pov_all_table)
+
+
+# export to excel
+write_xlsx(aapi_pov_all_table, "aapi_poverty_all.xlsx")
+```
+
+Merge dataframes together
+
+```{r}
+AAPI_pov_FINAL <- rbind(aapi_pov_table, aapi_pov_overall_table, aapi_pov_all_table)
+
+# Print the merged dataset
+view(AAPI_pov_FINAL)
+```
